@@ -59,10 +59,12 @@ bash tools/sync-web.sh ../tvplayer-cf
 
 ## 已知的行为差异
 
-- 数据在 WebView 的 localStorage 里，按 `appassets.androidplatform.net` 这个域存，**和网页版不互通**；卸载重装会清掉源列表和播放进度，先「导出/备份」再重装。
+- 数据在 WebView 的 localStorage 里，按 `appassets.androidplatform.net` 这个域存，**和网页版不互通**；覆盖安装不动数据，卸载重装会清掉源列表和播放进度，卸载前先「导出/备份」。
 - Service Worker 在 WebView 里不支持，`sw.js` 注册会失败并被现有 catch 吞掉，无影响。
-- 「新窗口播放」按钮在 App 里没有意义（本来就是全屏壳内），点了会走弹窗被拦的分支变成复制地址。
+- 「本地导入」用的是 `<input type="file">`，WebView 必须由宿主实现 `onShowFileChooser` 才会弹系统文件选择器，已经接上了；挑 `.json` 即可。
+- 「新窗口播放」不再走复制兜底，而是把片源地址交给系统，用外部播放器或浏览器打开。注意它拿到的是源站原始地址，不带 App 里的防盗链 Referer，查 Referer 的源站可能拒绝。
 - 源站是 http 的片子能直接放（`usesCleartextTraffic` + 允许混合内容），这点比浏览器版宽松。
+- CI 出的是 debug 签名包。签名文件已从 Actions cache 复用，新包可以直接覆盖安装；只有第一次（或缓存被清理后）签名变了，需要先卸载旧版本再装。
 
 ## 安全说明
 
