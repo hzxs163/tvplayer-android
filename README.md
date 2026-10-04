@@ -61,6 +61,8 @@ bash tools/sync-web.sh ../tvplayer-cf
 
 - 数据在 WebView 的 localStorage 里，按 `appassets.androidplatform.net` 这个域存，**和网页版不互通**；覆盖安装不动数据，卸载重装会清掉源列表和播放进度，卸载前先「导出/备份」。
 - Service Worker 在 WebView 里不支持，`sw.js` 注册会失败并被现有 catch 吞掉，无影响。
+- `<video>` 没有 `poster` 时，Android WebView 会垫一张系统默认封面（又糊又大的灰圆+黑三角），它在 DOM 里没有任何节点，样式表管不着；`WebChromeClient.getDefaultVideoPoster()` 返回一张全透明 1x1 图把它换掉，观感和网页端一致。
+- 转到横屏不会自动全屏是 Chrome 自己做的事，WebView 不做。`onConfigurationChanged` 里注入脚本：先试标准 Fullscreen API，400ms 内没进全屏就退化成给 `#player-section` 打一段撑满视口的样式；转回竖屏时把两者都撤掉。
 - 「本地导入」用的是 `<input type="file">`，WebView 必须由宿主实现 `onShowFileChooser` 才会弹系统文件选择器，已经接上了；挑 `.json` 即可。
 - 「新窗口播放」不再走复制兜底，而是把片源地址交给系统，用外部播放器或浏览器打开。注意它拿到的是源站原始地址，不带 App 里的防盗链 Referer，查 Referer 的源站可能拒绝。
 - 源站是 http 的片子能直接放（`usesCleartextTraffic` + 允许混合内容），这点比浏览器版宽松。

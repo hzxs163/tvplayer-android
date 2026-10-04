@@ -3,6 +3,8 @@ package com.hzxs.tvplayer
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
+import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -42,6 +44,42 @@ class MainActivity : Activity() {
         // 允许 chrome://inspect 连进来调试；不想开放就改成 false
         private const val DEBUG_INSPECT = true
         private const val REQ_FILE = 1001
+
+        /**
+         * 转横屏时把视频顶成全屏。Chrome 网页版是浏览器自己做的这件事，WebView 不做。
+         * 先走标准 Fullscreen API（能走通就由 UA 自己合成全屏），拿不到全屏再退化成
+         * 注入一段样式把播放区撑满视口 —— 两条路都不用模拟点击，任何 WebView 版本都成立。
+         */
+        private const val LANDSCAPE_JS = """
+(function () {
+    var sec = document.getElementById('player-section');
+    var v = document.getElementById('player');
+    if (!sec || !v || !sec.classList.contains('open')) return;
+    if (document.fullscreenElement) return;
+    function theater() {
+        if (document.fullscreenElement) return;
+        var s = document.getElementById('tv-landscape');
+        if (!s) { s = document.createElement('style'); s.id = 'tv-landscape'; document.head.appendChild(s); }
+        s.textContent = '#player-section{position:fixed!important;top:0;left:0;width:100vw!important;'
+            + 'height:100vh!important;max-height:none!important;aspect-ratio:auto!important;'
+            + 'border:0!important;border-radius:0!important;background:#000!important;z-index:2147483647!important}'
+            + 'header,main>*:not(#player-section){display:none!important}';
+    }
+    try {
+        var p = v.requestFullscreen({ navigationUI: 'hide' });
+        if (p && p['catch']) p['catch'](theater);
+    } catch (e) { theater(); }
+    setTimeout(theater, 400);
+})();
+"""
+
+        private const val PORTRAIT_JS = """
+(function () {
+    var s = document.getElementById('tv-landscape');
+    if (s) s.remove();
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
+})();
+"""
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -96,6 +134,12 @@ class MainActivity : Activity() {
             override fun onHideCustomView() {
                 exitFullscreen()
             }
+
+            // <video> 没写 poster 时，Android WebView 会自己垫一张系统默认封面 ——
+            // 就是那个又糊又大的灰圆+黑三角，网页端没有。样式表管不到它（不在 DOM 里），
+            // 只能宿主还它一张全透明的图。
+            override fun getDefaultVideoPoster(): Bitmap =
+                Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
 
             // 网页里的 <input type="file">（本地导入）必须宿主把选择器拉起来，
             // 不实现的话点按钮完全没有反应，页面也不会报错
@@ -238,6 +282,17 @@ class MainActivity : Activity() {
             webView.canGoBack() -> webView.goBack()
             else -> super.onBackPressed()
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 等页面按新视口重排完再动，否则量到的还是旧布局
+        webView.postDelayed({
+            webView.evaluateJavascript(
+                if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) LANDSCAPE_JS else PORTRAIT_JS,
+                null
+            )
+        }, 260)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
