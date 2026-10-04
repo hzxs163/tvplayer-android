@@ -32,6 +32,15 @@ jobs:
       - name: 确认 SDK 组件
         run: yes | sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
+      # 每次新建 runner 都会现造一个 debug.keystore，签名一变手机就装不上新包
+      # （INSTALL_FAILED_UPDATE_INCOMPATIBLE），只能先卸载。缓存住这个目录，
+      # 以后出的包都是同一个签名，直接覆盖安装就行。
+      - name: 复用调试签名
+        uses: actions/cache@v4
+        with:
+          path: ~/.android
+          key: debug-keystore-v1
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
