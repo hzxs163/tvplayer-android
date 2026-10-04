@@ -1,0 +1,75 @@
+# TVPlayer 安卓壳
+
+把 `tvplayer-cf` 的网页原样装进一个 APK，**不依赖任何外部代理服务器**：取流、防盗链头、m3u8 地址重写全部在手机本地做。
+
+`tvplayer-cf` 仓库的代码一行都不用改，这个目录是完全独立的工程。
+
+## 架构
+
+```
+WebView  (页面挂在 https://appassets.androidplatform.net/)
+   ├── /index.html /script.js ...   → APK 内的 assets（= tvplayer-cf 的静态文件，逐字节相同）
+   └── /api/play?url=…  /api/proxy?url=…
+                                    → LocalProxy.handle()  ← 拦在这里
+                                    → HttpURLConnection 直接连源站（补 UA/Referer、透传 Range、
+                                       手动跟随跨协议重定向、m3u8 里的分片与 KEY 地址重写回 /api/play）
+```
+
+页面挂在一个真实的 https 域名上（而不是 `file://`），是为了让原代码里的相对路径和 `window.location.origin` 都照常工作，因此不需要改动 `script.js`。
+
+| 原来的 | 现在 |
+| --- | --- |
+| `functions/api/play.js` | `LocalProxy.media()` |
+| `functions/api/proxy.js` | `LocalProxy.passthrough()` |
+| Cloudflare 边缘缓存 | 无（本机直连，不需要） |
+
+## 构建 APK（云端，本机不用装 Android SDK）
+
+这台机器只需要 git。GitHub Actions 会拉 JDK 17 + Android SDK 34 + Gradle 8.7，跑 `assembleDebug`，产物以 artifact 形式给出。
+
+1. 在 GitHub 网页上新建一个空仓库（比如 `tvplayer-android`），不要初始化 README。
+2. 推送本工程（本目录已经 `git init` 并提交过，只需加 remote）：
+
+```bash
+cd tvplayer-android
+git remote add origin git@github.com:你的账号/tvplayer-android.git
+git push -u origin main
+```
+
+没有初始化过时：
+
+```bash
+git init -b main && git add -A && git commit -m "安卓壳：内置本地代理，原样承载 tvplayer-cf 网页"
+```
+
+3. 仓库页面 Actions → 「构建 APK」→ 跑完在 Artifacts 里下载 `tvplayer-debug-apk`。
+4. 手机装：允许「安装未知来源」，`adb install app-debug.apk` 或直接传到手机点开。
+
+调试签名（Gradle 自带 debug keystore）就能装，但**上不了 Google Play**——影视聚合类应用基本会被拒，这个项目本来就是自用。
+
+## 更新网页内容
+
+`tvplayer-cf` 改过之后，重新同步一次再推：
+
+```bash
+bash tools/sync-web.sh ../tvplayer-cf
+```
+
+脚本会逐个文件比对 sha256，保证进 APK 的字节和仓库里完全一致。
+
+## 已知的行为差异
+
+- 数据在 WebView 的 localStorage 里，按 `appassets.androidplatform.net` 这个域存，**和网页版不互通**；卸载重装会清掉源列表和播放进度，先「导出/备份」再重装。
+- Service Worker 在 WebView 里不支持，`sw.js` 注册会失败并被现有 catch 吞掉，无影响。
+- 「新窗口播放」按钮在 App 里没有意义（本来就是全屏壳内），点了会走弹窗被拦的分支变成复制地址。
+- 源站是 http 的片子能直接放（`usesCleartextTraffic` + 允许混合内容），这点比浏览器版宽松。
+
+## 安全说明
+
+`LocalProxy` 拿到的 `url` 参数是外部数据，所以：
+
+- 只允许 http/https，禁止 `file://`、`content://` 之类协议。
+- 拦掉 `127.0.0.0/8`、`::1`、`0.0.0.0`、`169.254.0.0/16`（含云主机元数据地址），不让恶意源列表探测手机自身服务。
+- **故意放行** `192.168.x.x`、`10.x` 这些局域网地址：很多人把 CMS 源站或片源放在家里 NAS 上，网页版走 Cloudflare 时够不着，App 里能够得着，这是它相对网页版的一个额外好处。
+
+`MainActivity` 里 `DEBUG_INSPECT = true`，允许电脑用 `chrome://inspect` 调试手机上的页面；不想开放就改成 `false` 再构建。

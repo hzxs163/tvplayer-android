@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>TVPlayer · 云端影视</title>
+    
+    <!-- ===== PWA 配置 ===== -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#b76e4a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <!-- ===== PWA 配置结束 ===== -->
+    
+    <script src="/hls.min.js" defer></script>
+    <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+    <!-- ===== Toast ===== -->
+    <div id="toast-container"></div>
+
+    <!-- ===== Header ===== -->
+    <header>
+        <div class="logo" onclick="switchToBrowse()">🎬 TV<span>Player</span></div>
+        <div class="controls">
+            <select id="sourceSelect"><option value="">请导入源</option></select>
+            <input type="text" id="searchInput" placeholder="搜索片名…" disabled />
+            <button class="btn btn-primary" id="searchBtn" disabled onclick="doSearch()">搜索</button>
+            <button class="btn-ghost" onclick="showImportModal()" title="导入源" style="font-size:18px;padding:0 6px;display:flex;align-items:center;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e74c3c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="3" y1="6" x2="21" y2="6"/>
+                    <line x1="3" y1="12" x2="21" y2="12"/>
+                    <line x1="3" y1="18" x2="21" y2="18"/>
+                </svg>
+            </button>
+            <span id="status">请导入源</span>
+        </div>
+    </header>
+
+    <!-- ===== Main ===== -->
+    <main>
+
+        <!-- ==========================================================
+        播放器（只包含视频）
+        ========================================================== -->
+        <div id="player-section">
+            <!-- 加载遮罩 -->
+            <div id="player-loading" class="show">
+                <span class="spinner"></span>
+                <span class="label">加载中…</span>
+            </div>
+            <video id="player" controls preload="metadata" playsinline></video>
+            <iframe id="player-iframe" allowfullscreen></iframe>
+        </div>
+
+        <!-- ==========================================================
+        播放器控制栏（在视频下方）
+        ========================================================== -->
+        <div class="player-controls" id="playerControls">
+            <span class="title" id="nowPlaying">—</span>
+            <select id="lineSelect" onchange="switchPlayerLine(this.value)"></select>
+            <select id="rateSelect" onchange="changePlaybackRate(this.value)" title="播放速度">
+                <option value="0.5">0.5x</option>
+                <option value="0.75">0.75x</option>
+                <option value="1" selected>1x</option>
+                <option value="1.25">1.25x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2">2x</option>
+            </select>
+            <button class="ctrl-btn" onclick="toggleEpisodesPanel()" title="选集">📋 选集</button>
+            <button class="ctrl-btn close-btn" onclick="closePlayer()" title="收起">✕</button>
+            <div class="link-row">
+                <input class="link-input" id="m3u8Link" readonly onclick="this.select()" placeholder="m3u8 地址" />
+                <button class="btn-open" onclick="openLink()" title="在新标签页用浏览器自带播放器播放">新窗口播放</button>
+                <button class="btn-copy" onclick="copyLink()">复制</button>
+            </div>
+        </div>
+
+        <!-- ==========================================================
+        选集面板（在控制栏下方）
+        ========================================================== -->
+        <div id="episodes-panel">
+            <div class="panel-header">
+                <span>📋 选集</span>
+                <button onclick="toggleEpisodesPanel()">✕</button>
+            </div>
+            <div class="ep-list" id="episodes-list"></div>
+        </div>
+
+        <!-- ==========================================================
+        PAGE: 浏览
+        ========================================================== -->
+        <div id="pageBrowse" class="page active">
+            <div class="category-nav" id="categoryNav"></div>
+            <div class="browse-header" id="browseHeader">
+                <div class="title" id="browseTitle">热门推荐 <span class="badge" id="browseBadge"></span></div>
+                <div>
+                    <span class="info" id="browseInfo"></span>
+                    <button class="btn-ghost" onclick="pagePrev()">‹</button>
+                    <span class="info" id="pageInfo">1</span>
+                    <button class="btn-ghost" onclick="pageNext()">›</button>
+                </div>
+            </div>
+            <div class="grid" id="browseGrid"></div>
+            <div class="pager" id="browsePager">
+                <button class="btn-ghost" onclick="pagePrev()">‹ 上一页</button>
+                <span id="pageInfo2">1</span>
+                <button class="btn-ghost" onclick="pageNext()">下一页 ›</button>
+            </div>
+        </div>
+
+        <!-- ==========================================================
+        PAGE: 搜索
+        ========================================================== -->
+        <div id="pageSearch" class="page">
+            <div class="empty-state" id="emptyState">
+                <span class="icon">🔍</span>
+                输入片名开始搜索<br />
+                试试 <b>完美世界</b> · <b>时光代理人</b> · <b>庆余年</b>
+                <div class="hint">或切换到「浏览」模式逛一逛</div>
+            </div>
+            <div class="stats" id="resultStats" style="display:none;"></div>
+            <div class="grid" id="searchGrid"></div>
+        </div>
+
+    </main>
+
+<!-- ============================================================
+    导入弹窗（美化版）
+    ============================================================ -->
+<div id="importModal">
+    <div class="import-box">
+        <!-- 标题栏 -->
+        <div class="modal-header">
+            <h3>✦ 源管理</h3>
+            <button class="close-modal" onclick="closeImportModal()">✕</button>
+        </div>
+        <div class="sub">管理你的影视源列表 · 支持 JSON 导入与在线编辑</div>
+
+        <!-- 导入区域 -->
+        <div class="import-section">
+            <div class="section-label">📄 导入 JSON</div>
+            <textarea id="importTextarea" placeholder='请粘贴 JSON 格式的源列表，点击「加载示例」查看格式'></textarea>
+            
+            <!-- 🆕 远程导入 -->
+            <div class="remote-import-row">
+                <input type="text" id="remoteUrlInput" placeholder="输入远程源地址，如 https://example.com/sources.json" />
+                
+                <button class="btn btn-ghost" onclick="fetchRemoteSources()" style="display:flex;align-items:center;gap:4px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/>
+                    </svg>
+                    远程导入
+                </button>
+               
+            </div>
+            
+            <div class="import-actions">
+                <button class="btn btn-ghost" onclick="loadExample()">💡加载示例</button>
+                <button class="btn btn-ghost" onclick="importSources()" style="display:flex;align-items:center;gap:4px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                        <polyline points="17 21 17 13 7 13 7 21"/>
+                        <polyline points="7 3 7 8 15 8"/>
+                    </svg>
+                    保存
+                </button>
+                <button class="btn btn-ghost" onclick="document.getElementById('fileInput').click()" style="display:flex;align-items:center;gap:4px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                        <line x1="8" y1="21" x2="16" y2="21"/>
+                        <line x1="12" y1="17" x2="12" y2="21"/>
+                    </svg>
+                    本地导入
+                </button>
+                <input type="file" id="fileInput" accept=".json" style="display:none" onchange="importFromFile(event)" />
+            </div>
+        </div>
+
+        <!-- 已有源列表 -->
+        <div class="source-section">
+            <!-- 固定表头 -->
+            <div class="source-header-fixed">
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <span class="label">📋 源数量</span>
+                    <span class="count" id="importCount">0 个</span>
+                    <span class="count" id="validCount" style="background:#2e7d32;color:#fff;padding:2px 10px;border-radius:12px;font-size:12px;">🟢 0</span>
+                    <span class="count" id="invalidCount" style="background:#c62828;color:#fff;padding:2px 10px;border-radius:12px;font-size:12px;">🔴 0</span>
+                    <button class="btn btn-ghost" onclick="checkAllSources()" id="checkBtn" style="font-size:12px; padding:2px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; background:var(--bg);">
+                        🔍 检测源
+                    </button>
+                </div>
+            </div>
+            <!-- 源列表容器 -->
+            <div class="source-list" id="sourceList">
+                <div class="empty-hint">📭 暂无源，请导入</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+    <!-- ===== Footer ===== -->
+    <footer>
+        <span>☁️ Cloudflare Pages</span>
+        <span>·</span>
+        <a href="#" onclick="showDisclaimer();return false;">免责声明</a>
+        <span>·</span>
+        <span>源由用户自行导入</span>
+    </footer>
+
+    <!-- ===== Service Worker ===== -->
+    <script>
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js')
+                .then(reg => console.log('✅ Service Worker 注册成功'))
+                .catch(err => console.log('❌ Service Worker 注册失败:', err));
+        });
+    }
+    </script>
+    <!-- ===== Service Worker 结束 ===== -->
+
+    <script src="/script.js"></script>
+</body>
+</html>
