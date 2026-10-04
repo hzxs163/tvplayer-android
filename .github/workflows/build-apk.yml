@@ -37,7 +37,22 @@ jobs:
           gradle-version: '8.7'
 
       - name: 构建
-        run: gradle --no-daemon assembleDebug
+        run: |
+          set +e
+          gradle --no-daemon --stacktrace assembleDebug > build.log 2>&1
+          rc=$?
+          # 日志原文只有仓库管理员能下载，这里把关键错误行发成 check-run 注解，
+          # 注解是公开 API 可读的，否则远程排查只能靠人肉复制报错。
+          {
+            awk '/^e: /' build.log
+            sed -n '/^\* What went wrong/,/^\* Try:/p' build.log
+            grep -E '^(FAILURE|> Task .* FAILED|error:)' build.log
+          } | head -n 25 > notes.txt
+          if [ ! -s notes.txt ]; then tail -n 15 build.log > notes.txt; fi
+          while IFS= read -r line; do
+            printf '::error::%s\n' "$(printf '%s' "$line" | tr -d '\r' | sed 's/%/%25/g')"
+          done < notes.txt
+          exit $rc
 
       - name: 产物信息
         run: |
