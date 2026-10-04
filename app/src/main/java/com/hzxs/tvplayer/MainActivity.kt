@@ -3,6 +3,7 @@ package com.hzxs.tvplayer
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -10,6 +11,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Message
 import android.view.Gravity
+import android.view.OrientationEventListener
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -37,6 +39,13 @@ class MainActivity : Activity() {
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var savedSystemUi = 0
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var sensor: OrientationEventListener? = null
+    private var heldLandscape = false
+    // 手机是不是正被横着拿、而且是我们为了播放才把它扳过去的，用来区分
+    // 「他自己点的全屏」和「转手机自动顶上去的全屏」，退出时不能一并撤销
+    private var sensorLandscape = false
+    // 是不是我们替用户把屏幕扳成横屏的，退回去时只撤自己改的那部分
+    private var forcedLandscape = false
 
     companion object {
         private const val APP_HOST = "appassets.androidplatform.net"
@@ -80,6 +89,10 @@ class MainActivity : Activity() {
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
 })();
 """
+
+        /** 只有正在播放时才允许替用户把屏幕转成横屏，否则会把浏览页一起转过去 */
+        private const val PLAYER_OPEN_JS =
+            "(function(){var s=document.getElementById('player-section');return !!(s&&s.classList.contains('open'));})()"
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -189,11 +202,57 @@ class MainActivity : Activity() {
             }
         }
 
+        // 方向锁定开着时 WebView 根本收不到 onConfigurationChanged，转手机什么也不会发生；
+        // 而网页版（Chrome）是绕过锁定直接横屏的。所以这里自己读重力传感器，
+        // 再用 Activity 的 requestedOrientation 去覆盖系统的旋转锁。
+        sensor = object : OrientationEventListener(this) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                val landscape = orientation in 45..135 || orientation in 225..315
+                if (landscape == heldLandscape) return
+                heldLandscape = landscape
+                if (landscape) onHeldLandscape() else onHeldPortrait()
+            }
+        }.also { if (it.canDetectOrientation()) it.enable() }
+
         if (savedInstanceState != null) {
             webView.restoreState(savedInstanceState)
         } else {
             webView.loadUrl(START_URL)
         }
+    }
+
+    /** 横过来拿：正在播放就把视频顶成全屏，并把屏幕按传感器里的横屏两个方向都放开 */
+    private fun onHeldLandscape() {
+        webView.evaluateJavascript(PLAYER_OPEN_JS) { value ->
+            if (value != "true") return@evaluateJavascript
+            sensorLandscape = true
+            if (customView == null) webView.evaluateJavascript(LANDSCAPE_JS, null)
+            forceLandscape()
+        }
+    }
+
+    /**
+     * 转回竖屏只撤销自己干的事：如果是他自己点的全屏，就别因为手机倾斜一下给人退出去。
+     */
+    private fun onHeldPortrait() {
+        if (!sensorLandscape) return
+        sensorLandscape = false
+        webView.evaluateJavascript(PORTRAIT_JS, null)
+        releaseLandscape()
+    }
+
+    /** Activity 主动要求的方向优先于系统旋转锁，Chrome 放视频也是这么绕过方向锁的 */
+    private fun forceLandscape() {
+        if (forcedLandscape) return
+        forcedLandscape = true
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
+
+    private fun releaseLandscape() {
+        if (!forcedLandscape) return
+        forcedLandscape = false
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER
     }
 
     /**
@@ -263,6 +322,8 @@ class MainActivity : Activity() {
                 or View.SYSTEM_UI_FLAG_FULLSCREEN
                 or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
             )
+        // 全屏视频横过来看才铺得满，方向锁也要照样转（Chrome 就是这个行为）
+        forceLandscape()
     }
 
     private fun exitFullscreen() {
@@ -274,6 +335,8 @@ class MainActivity : Activity() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         customViewCallback?.onCustomViewHidden()
         customViewCallback = null
+        // 手机还横着拿在放的时候不撒手，等传感器报回竖屏再恢复
+        if (!sensorLandscape) releaseLandscape()
     }
 
     override fun onBackPressed() {
@@ -286,12 +349,13 @@ class MainActivity : Activity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        val landscape = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
+        // 已经在原生全屏里（onShowCustomView 那条路）就别再往页面里塞全屏了，
+        // 否则等于在全屏之上再套一层 requestFullscreen，退出时容易只剩一层
+        if (landscape && customView != null) return
         // 等页面按新视口重排完再动，否则量到的还是旧布局
         webView.postDelayed({
-            webView.evaluateJavascript(
-                if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) LANDSCAPE_JS else PORTRAIT_JS,
-                null
-            )
+            webView.evaluateJavascript(if (landscape) LANDSCAPE_JS else PORTRAIT_JS, null)
         }, 260)
     }
 
@@ -311,6 +375,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        sensor?.disable()
+        sensor = null
         webView.stopLoading()
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()

@@ -63,6 +63,7 @@ bash tools/sync-web.sh ../tvplayer-cf
 - Service Worker 在 WebView 里不支持，`sw.js` 注册会失败并被现有 catch 吞掉，无影响。
 - `<video>` 没有 `poster` 时，Android WebView 会垫一张系统默认封面（又糊又大的灰圆+黑三角），它在 DOM 里没有任何节点，样式表管不着；`WebChromeClient.getDefaultVideoPoster()` 返回一张全透明 1x1 图把它换掉，观感和网页端一致。
 - 转到横屏不会自动全屏是 Chrome 自己做的事，WebView 不做。`onConfigurationChanged` 里注入脚本：先试标准 Fullscreen API，400ms 内没进全屏就退化成给 `#player-section` 打一段撑满视口的样式；转回竖屏时把两者都撤掉。
+- **开着系统方向锁也一样能横过来播**：锁定时 Activity 根本不会收到 `onConfigurationChanged`，光靠上面那条等于失效。所以宿主自己读重力传感器（`OrientationEventListener`），播放中检测到横着拿就 `requestedOrientation = SCREEN_ORIENTATION_SENSOR_LANDSCAPE` —— 这个方向是「无视用户旋转锁」的一族，和 Chrome 全屏放视频用的是同一个口子；手动点视频的全屏按钮也走同一处。竖过来、退出全屏时才还原成 `SCREEN_ORIENTATION_USER`（继续听系统的锁）。只有 `#player-section` 带 `open` 时才扳，否则会把浏览页一起转成横屏。
 - 「本地导入」用的是 `<input type="file">`，WebView 必须由宿主实现 `onShowFileChooser` 才会弹系统文件选择器，已经接上了；挑 `.json` 即可。
 - 「新窗口播放」不再走复制兜底，而是把片源地址交给系统，用外部播放器或浏览器打开。注意它拿到的是源站原始地址，不带 App 里的防盗链 Referer，查 Referer 的源站可能拒绝。
 - 源站是 http 的片子能直接放（`usesCleartextTraffic` + 允许混合内容），这点比浏览器版宽松。
