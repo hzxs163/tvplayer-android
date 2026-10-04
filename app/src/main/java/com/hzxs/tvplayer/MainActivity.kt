@@ -78,7 +78,7 @@ class MainActivity : Activity() {
                 val path = uri.path ?: return null
                 if (!APP_HOST.equals(uri.host, true)) return null
                 if (path.startsWith("/api/")) return LocalProxy.handle(request)
-                return assetLoader?.shouldInterceptRequest(request)
+                return assetLoader?.shouldInterceptRequest(request.url)
             }
         }
 
