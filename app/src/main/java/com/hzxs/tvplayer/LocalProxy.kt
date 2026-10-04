@@ -1,12 +1,15 @@
 package com.hzxs.tvplayer
 
+import android.os.ParcelFileDescriptor
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.Charset
+import java.util.concurrent.Executors
 
 /**
  * App 内置代理，替代原来的 Cloudflare Pages Functions。
@@ -23,6 +26,11 @@ object LocalProxy {
     private const val READ_MS = 30000
     private const val MAX_REDIRECT = 5
     private val KEY_URI = Regex("URI=\"([^\"]+)\"")
+
+    // 一次搜索并发 6 路、播放时分片也是并发取，线程数跟着请求走比排队划算
+    private val pool = Executors.newCachedThreadPool { r ->
+        Thread(r, "LocalProxy").apply { isDaemon = true }
+    }
 
     fun handle(request: WebResourceRequest): WebResourceResponse {
         val uri = request.url
@@ -84,18 +92,60 @@ object LocalProxy {
     }
 
     // ============================================================
-    //  源站接口（CMS JSON）：整包读回，等同于原 proxy.js
+    //  源站接口（CMS JSON）：回调立刻返回，取数据在后台线程并行做
     // ============================================================
+    /**
+     * WebView 的 shouldInterceptRequest 是在一条私有线程上串行调用的。在这里等源站，
+     * 页面同时发出的其它请求就全排在后面 —— 多源搜索是 6 路并发、每路 15 秒超时，
+     * 结果就是慢源把快源一起拖死，网页端 7 条到 App 里只剩 1 条。
+     * 所以这里只交出一根管道，真正的请求丢给线程池，回调一微秒都不多待。
+     */
     private fun passthrough(target: String): WebResourceResponse {
-        val conn = open(target, mapOf("Accept" to "application/json, text/plain, */*"))
-        val code = conn.responseCode
-        val bytes = readBytes(conn) ?: ByteArray(0)
-        val headers = headersOf(conn, bytes.size.toLong())
-        val mime = conn.contentType.orEmpty().substringBefore(';').trim().ifEmpty { "application/json" }
-        val charset = charsetOf(conn)
-        conn.disconnect()
-        return WebResourceResponse(mime, charset, statusOf(code), reasonOf(code), headers, ByteArrayInputStream(bytes))
+        // 用系统管道而不是内存缓冲：回调交出去的是读端，写端在后台线程边收边灌
+        val fds = ParcelFileDescriptor.createPipe()
+        val readEnd = ParcelFileDescriptor.AutoCloseInputStream(fds[0])
+        val writeEnd = ParcelFileDescriptor.AutoCloseOutputStream(fds[1])
+        pool.execute {
+            var opened: HttpURLConnection? = null
+            try {
+                val conn = open(target, mapOf("Accept" to "application/json, text/plain, */*"))
+                opened = conn
+                val code = conn.responseCode
+                val body = bodyStream(conn)
+                when {
+                    code !in 200..299 -> writeJsonError(writeEnd, code, "源站返回错误: " + code)
+                    body == null -> writeJsonError(writeEnd, 502, "源站没有返回内容")
+                    else -> {
+                        // 按源站声明的字符集转成 UTF-8 再交出去：「解析播放」那条路走的是
+                        // resp.text()，编码对不上就是一屏乱码，正则也捞不到 m3u8
+                        val charset = charsetOf(conn).toCharset()
+                        val text = body.use { String(it.readBytes(), charset) }
+                        writeEnd.write(text.toByteArray(Charsets.UTF_8))
+                    }
+                }
+            } catch (e: Exception) {
+                writeJsonError(writeEnd, 502, "代理请求失败: " + (e.message ?: e.javaClass.simpleName))
+            } finally {
+                runCatching { writeEnd.close() }
+                opened?.disconnect()
+            }
+        }
+        // 状态码只能先定成 200：页面用 resp.json() 取数据，源站的失败已经变成
+        // {"code":...,"msg":...} 写在正文里了，和原 proxy.js 的错误契约一致
+        return WebResourceResponse("application/json", "utf-8", 200, "OK", headersOf(null, -1L), readEnd)
     }
+
+    /** 写不进去一般说明页面已经把这个请求作废了（切页/重新搜索），没有可补救的 */
+    private fun writeJsonError(out: OutputStream, code: Int, message: String) {
+        val body = ("{\"code\":" + code + ",\"msg\":" + jsonQuote(message) + "}").toByteArray(Charsets.UTF_8)
+        runCatching { out.write(body) }
+    }
+
+    private fun jsonQuote(s: String): String {
+        val escaped = s.replace("\\", "\\\\").replace("\"", "\\\"").filter { it.code >= 32 }
+        return "\"" + escaped + "\""
+    }
+
 
     // ============================================================
     //  发起请求：伪装浏览器头 + 手动跟随跨协议重定向

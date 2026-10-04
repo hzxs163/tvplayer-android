@@ -68,6 +68,10 @@ bash tools/sync-web.sh ../tvplayer-cf
 - 源站是 http 的片子能直接放（`usesCleartextTraffic` + 允许混合内容），这点比浏览器版宽松。
 - CI 出的是 debug 签名包。签名文件已从 Actions cache 复用，新包可以直接覆盖安装；只有第一次（或缓存被清理后）签名变了，需要先卸载旧版本再装。
 
+## 内置代理的一条硬约束
+
+`shouldInterceptRequest` 在 WebView 里是**一条私有线程串行调用**的：回调里等多久，页面同时发出的其它请求就排多久的队。页面的多源搜索是 6 路并发、每路 15 秒超时，所以 `/api/proxy` 绝不能在回调里同步等源站 —— 否则一个慢源会把所有快源一起拖死（表现就是网页端 7 条结果、App 里只剩 1 条）。现在的路子是回调立刻交出一根 `ParcelFileDescriptor` 管道的读端，真正的请求丢给线程池并行做。
+
 ## 安全说明
 
 `LocalProxy` 拿到的 `url` 参数是外部数据，所以：
