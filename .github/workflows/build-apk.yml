@@ -63,12 +63,24 @@ jobs:
           done < notes.txt
           exit $rc
 
+      # 版本号只在 app/build.gradle 里维护一份，这里读出来当文件名。
+      # 先把引号全剥掉再按字段取，这样 versionName '1.0.4' 和 versionName "1.0.4" 都能认。
+      - name: 按版本号命名产物
+        run: |
+          VER=$(tr -d "'\"" < app/build.gradle | awk '$1=="versionName"{print $2; exit}')
+          if [ -z "$VER" ]; then echo "没从 app/build.gradle 里读到 versionName" >&2; exit 1; fi
+          echo "APP_VERSION=$VER" >> "$GITHUB_ENV"
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/TVPlayer-v$VER.apk"
+
       - name: 产物信息
         run: |
-          APK=app/build/outputs/apk/debug/app-debug.apk
+          APK="dist/TVPlayer-v$APP_VERSION.apk"
           ls -l "$APK"
           {
             echo "### APK"
+            echo
+            echo "TVPlayer-v$APP_VERSION.apk"
             echo
             echo '```'
             sha256sum "$APK"
@@ -78,7 +90,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tvplayer-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: TVPlayer-v${{ env.APP_VERSION }}
+          path: dist/TVPlayer-v${{ env.APP_VERSION }}.apk
           if-no-files-found: error
           retention-days: 30

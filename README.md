@@ -42,8 +42,9 @@ git push -u origin main
 git init -b main && git add -A && git commit -m "安卓壳：内置本地代理，原样承载 tvplayer-cf 网页"
 ```
 
-3. 仓库页面 Actions → 「构建 APK」→ 跑完在 Artifacts 里下载 `tvplayer-debug-apk`。
-4. 手机装：允许「安装未知来源」，`adb install app-debug.apk` 或直接传到手机点开。
+3. 仓库页面 Actions → 「构建 APK」→ 跑完在 Artifacts 里下载 `TVPlayer-v<版本号>`，解压出来就是 `TVPlayer-v1.0.4.apk` 这样的文件名。
+   版本号取自 `app/build.gradle` 的 `versionName`，只维护这一处：每次改完代码顺手把它和 `versionCode` 往上加一位，CI 出的包名和安装后的版本就跟着变，不会再出现一堆同名的 `app-debug.apk`。
+4. 手机装：允许「安装未知来源」，直接传到手机点开，或 `adb install TVPlayer-v1.0.4.apk`。
 
 调试签名（Gradle 自带 debug keystore）就能装，但**上不了 Google Play**——影视聚合类应用基本会被拒，这个项目本来就是自用。
 
