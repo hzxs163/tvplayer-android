@@ -1,0 +1,12 @@
+# 构建与配置文件统一 LF，避免 Git Bash / CI 下行尾报错
+*.sh text eol=lf
+*.yml text eol=lf
+*.kt text eol=lf
+*.gradle text eol=lf
+*.properties text eol=lf
+*.xml text eol=lf
+*.md text eol=lf
+*.png binary
+
+# 网页资源必须和 tvplayer-cf 工作区逐字节一致，禁止任何行尾转换
+app/src/main/assets/** -text
